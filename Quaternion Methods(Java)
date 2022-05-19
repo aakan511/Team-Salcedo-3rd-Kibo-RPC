@@ -1,0 +1,63 @@
+package com.company;
+
+import java.sql.SQLOutput;
+
+/*IMPORTANT!
+    floats used instead of doubles throughout this program for compatibility
+    with the NASA Quaternion class(not used in this program), which uses quaternions.
+    NASA most likely uses floats because the robot cannot achieve the accurate positioning
+    that double type can produce, and the robot is most likely constrained in processing or RAM
+ */
+public class Main {
+    public static void main(String[] args) {
+        //Quaternion test = new Quaternion(0.0f, 0.707f, 0, 0.707f);
+        Quaternion test2 = new Quaternion(0, (float)Math.sin(Math.toRadians(45.0/2)), 0, (float)Math.cos(Math.toRadians(45.0/2)));
+        //quat rotation = multiplication
+        //w=cos(theta/2)
+        //x=sin(theta/2)
+        Quaternion test = new Quaternion(0.f, 0.707f, 0.0f, 0.707f);
+        Quaternion test1 = new Quaternion(0.f, 0.707f, 0.0f, 0.707f);
+        Quaternion rotation = new Quaternion(0.383f,0f,0f,0.924f);
+        test = multiply(test, zRotation(30));
+        //normalize(test);
+        System.out.println(test);
+        System.out.println(multiply(test1, xRotation(45)));
+
+    }
+
+    public static float length(Quaternion q){ //gets distance between (0, 0, 0, 0) and quaternion q
+        return (float)Math.sqrt(q.getW()*q.getW() + q.getX()*q.getX() + q.getY()*q.getY() + q.getZ()*q.getZ());
+    }
+    public static void normalize(Quaternion q){ //used to make sure that quaternion q is formatted properly
+        float length = length(q);
+        q.setW(q.getW()/length);
+        q.setX(q.getX()/length);
+        q.setY(q.getY()/length);
+        q.setZ(q.getZ()/length);
+    }
+    public static void sum(Quaternion q, Quaternion plus){ //adds two quaternions. For rotation quaternions, the result needs to be normalized. DOES NOT PROPERLY ROTATE TWO QUATERNIONS
+        q.setW(q.getW() + plus.getW());
+        q.setX(q.getX() + plus.getX());
+        q.setY(q.getY() + plus.getY());
+        q.setZ(q.getZ() + plus.getZ());
+    }
+    public static Quaternion multiply(Quaternion q, Quaternion r){ //proper way to rotate a quaternion. QUAT MULTIPLICATION NOT COMMUNICATIVE
+        float w = q.getW()*r.getW() - q.getX()*r.getX() - q.getY()*r.getY() - q.getZ()*r.getZ();
+        float x = q.getX()*r.getW() + q.getW()*r.getX() + q.getY()*r.getZ() - q.getZ()*r.getY();
+        float y = q.getY()*r.getW() + q.getW()*r.getY() + q.getZ()*r.getX() - q.getX()*r.getZ();
+        float z = q.getZ()*r.getW() + q.getW()*r.getZ() + q.getX()*r.getY() + q.getY()*r.getX();
+
+        return new Quaternion(x, y, z, w);
+    }
+    //creates basic quaternions that can be used to rotate robot orientation
+    public static Quaternion zRotation(double angle){
+        return new Quaternion(0, 0, (float)Math.sin(Math.toRadians(angle/2)), (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public static Quaternion xRotation(double angle){
+        return new Quaternion((float)Math.sin(Math.toRadians(angle/2)), 0, 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public static Quaternion yRotation(double angle){
+        return new Quaternion(0, (float)Math.sin(Math.toRadians(angle/2)), 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+
+}
