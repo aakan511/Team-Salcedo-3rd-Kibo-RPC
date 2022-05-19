@@ -30,6 +30,7 @@ public class YourService extends KiboRpcService {
         // move to a point
         Point point = new Point(10.710000f, -7.70000f, 4.48000f);
         Quaternion quaternion = new Quaternion(0.0f, 0.707f, 0.0f, 0.707f);
+        //Quaternion rotation = Quaternion.fromRotationXYZ(0, 0, 0);
         Result result = api.moveTo(point, quaternion, true);
 
         final int LOOP_MAX = 5;
@@ -49,23 +50,59 @@ public class YourService extends KiboRpcService {
         Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
 
         Log.i(TAG, "Length/size = " + corners.size());
+        Log.i(TAG, corners.get(0).rows() + ", "  + corners.get(0).cols());
         for(int i=0; i<corners.size(); i++){
             Log.i(TAG, "Mat: " + i);
-            for(int x=0; x<2; x++) {
-                for(int y=0; y<2; y++){
+            Log.i(TAG, corners.get(i).rows() + ", "  + corners.get(i).cols());
+            for(int x=0; x<corners.get(i).rows(); x++) {
+                for(int y=0; y<corners.get(i).cols(); y++){
                     Log.i(TAG, corners.get(i).get(x, y)[0] + ", " + corners.get(i).get(x, y)[1]);
                 }
             }
         }
+        double deltaY = corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1];
+        double deltaX = corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0];
+
+        double turnAngle = -Math.atan(deltaY/deltaX);
+        int counter = 0;
+        while(Math.abs(turnAngle) > Math.PI/25.0 && counter<LOOP_MAX){
+            quaternion = multiply(quaternion, zRotation(turnAngle));
+            for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+                result = api.moveTo(point, quaternion, true);
+            }
+
+            image = api.getMatNavCam();
+            Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+
+            deltaY = corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1];
+            deltaX = corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0];
+            turnAngle = -Math.atan(deltaY/deltaX);
+
+            counter++;
+        }
+        counter=0;
+
+
 
         // irradiate the laser
         api.laserControl(true);
 
         // take target1 snapshots
+        image = api.getMatNavCam();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target1Laser.png");
         api.takeTarget1Snapshot();
-
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target1Laser1.png");
         // turn the laser off
         api.laserControl(false);
+        quaternion = multiply(quaternion, xRotation(270));
+        for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+            result = api.moveTo(point, quaternion, true);
+        }
+        image = api.getMatNavCam();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "45RotateX.png");
 
         /* ******************************************** */
         /* write your own code and repair the air leak! */
@@ -106,6 +143,25 @@ public class YourService extends KiboRpcService {
                 (float) qua_z, (float) qua_w);
 
         api.relativeMoveTo(point, quaternion, true);
+    }
+
+    public Quaternion multiply(Quaternion q, Quaternion r){ //proper way to rotate a quaternion. QUAT MULTIPLICATION NOT COMMUNICATIVE
+        float w = q.getW()*r.getW() - q.getX()*r.getX() - q.getY()*r.getY() - q.getZ()*r.getZ();
+        float x = q.getX()*r.getW() + q.getW()*r.getX() + q.getY()*r.getZ() - q.getZ()*r.getY();
+        float y = q.getY()*r.getW() + q.getW()*r.getY() + q.getZ()*r.getX() - q.getX()*r.getZ();
+        float z = q.getZ()*r.getW() + q.getW()*r.getZ() + q.getX()*r.getY() + q.getY()*r.getX();
+
+        return new Quaternion(x, y, z, w);
+    }
+    //creates basic quaternions that can be used to rotate robot orientation
+    public Quaternion zRotation(double angle){
+        return new Quaternion(0, 0, (float)Math.sin(Math.toRadians(angle/2)), (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public Quaternion xRotation(double angle){
+        return new Quaternion((float)Math.sin(Math.toRadians(angle/2)), 0, 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public Quaternion yRotation(double angle){
+        return new Quaternion(0, (float)Math.sin(Math.toRadians(angle/2)), 0, (float)Math.cos(Math.toRadians(angle/2)));
     }
 
 }
