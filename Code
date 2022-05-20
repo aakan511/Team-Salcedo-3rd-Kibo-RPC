@@ -20,7 +20,7 @@ import java.util.ArrayList;
 public class YourService extends KiboRpcService {
 
     private final String TAG = this.getClass().getSimpleName();
-
+    private final float[] degreePerPixel = {01.020f, 01.1f};
     @Override
     protected void runPlan1(){
         // the mission starts
@@ -33,7 +33,7 @@ public class YourService extends KiboRpcService {
         //Quaternion rotation = Quaternion.fromRotationXYZ(0, 0, 0);
         Result result = api.moveTo(point, quaternion, true);
 
-        final int LOOP_MAX = 5;
+        final int LOOP_MAX = 15;
         //make sure robot reached point
         for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
             result = api.moveTo(point, quaternion, true);
@@ -49,40 +49,79 @@ public class YourService extends KiboRpcService {
         Mat ids = new Mat();
         Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
 
-        Log.i(TAG, "Length/size = " + corners.size());
-        Log.i(TAG, corners.get(0).rows() + ", "  + corners.get(0).cols());
-        for(int i=0; i<corners.size(); i++){
-            Log.i(TAG, "Mat: " + i);
-            Log.i(TAG, corners.get(i).rows() + ", "  + corners.get(i).cols());
-            for(int x=0; x<corners.get(i).rows(); x++) {
-                for(int y=0; y<corners.get(i).cols(); y++){
-                    Log.i(TAG, corners.get(i).get(x, y)[0] + ", " + corners.get(i).get(x, y)[1]);
-                }
-            }
-        }
-        double deltaY = corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1];
-        double deltaX = corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0];
+        float deltaY = (float)(corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1]);
+        float deltaX = (float)(corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0]);
 
-        double turnAngle = -Math.atan(deltaY/deltaX);
+        float turnAngle = (float)(-Math.atan(deltaY/deltaX));
+        //float turnAngle1 = turnAngle;
         int counter = 0;
-        while(Math.abs(turnAngle) > Math.PI/25.0 && counter<LOOP_MAX){
+        //while(Math.abs(turnAngle) > Math.PI/100.0 && counter<LOOP_MAX){
             quaternion = multiply(quaternion, zRotation(turnAngle));
             for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
                 result = api.moveTo(point, quaternion, true);
             }
+            //image = api.getMatNavCam();
+            //Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+            //deltaY = (float)(corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1]);
+            //deltaX = (float)(corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0]);
+            //turnAngle = (float)(-Math.atan(deltaY/deltaX));
+            //for(int i=0; i<LOOP_MAX && turnAngle1==turnAngle; i++){
+                //image = api.getMatNavCam();
+                //Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+                //deltaY = (float)(corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1]);
+                //deltaX = (float)(corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0]);
+                //turnAngle = (float)(-Math.atan(deltaY/deltaX));
+                //try{Thread.sleep(10);}catch(InterruptedException e){Log.i(TAG, ""+e);}
+            //}
+            //turnAngle1 = turnAngle;
 
+            //counter++;
+        //}
+        counter=0;
+        float avX = (float)((corners.get(1).get(0,0)[0] + corners.get(1).get(0,1)[0] + corners.get(2).get(0,3)[0] + corners.get(3).get(0,2)[0])/4.0);
+        float avY = (float)((corners.get(1).get(0,0)[1] + corners.get(1).get(0,1)[1] + corners.get(2).get(0,3)[1] + corners.get(3).get(0,2)[1])/4.0);
+        float deltaP = distance((float)corners.get(1).get(0,0)[0], (float)corners.get(1).get(0,0)[1], (float)corners.get(1).get(0,1)[0], (float)corners.get(1).get(0,1)[1]);
+        float[] laserPoint = {(640f + (9.94f*deltaP/5.0f)), (480+deltaP*0.0057f)};
+        //float dist[] = {1280f-avX, 960-avY};
+        float dist = distance(avX, avY, laserPoint[0], laserPoint[1]);
+        float dist1=dist;
+        Log.i(TAG, "deltaP = " + deltaP);
+        Log.i(TAG, "Laser point = (" + laserPoint[0] + ", " + laserPoint[1] + ")");
+
+        Log.i(TAG, "dist = " + dist);
+        Log.i(TAG, "avX = " + avX);
+        Log.i(TAG, "avY = " + avY);
+        while((dist>(deltaP*3/5.0f)) && counter<LOOP_MAX){
+            quaternion = multiply(quaternion, xRotation(degreePerPixel[0]*(laserPoint[0]-avX)));
+            quaternion = multiply(quaternion, yRotation(degreePerPixel[1]*(avY-laserPoint[1])));
+            for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+                result = api.moveTo(point, quaternion, true);
+            }
             image = api.getMatNavCam();
+            api.saveMatImage(image, ("target1center" + counter + ".png"));
             Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+            avX = (float)((corners.get(1).get(0,0)[0] + corners.get(1).get(0,1)[0] + corners.get(2).get(0,3)[0] + corners.get(3).get(0,2)[0])/4.0);
+            avY = (float)((corners.get(1).get(0,0)[1] + corners.get(1).get(0,1)[1] + corners.get(2).get(0,3)[1] + corners.get(3).get(0,2)[1])/4.0);
+            dist = distance(avX, avY, laserPoint[0], laserPoint[1]);
+            Log.i(TAG, "dist = " + dist);
+            Log.i(TAG, "avX = " + avX);
+            Log.i(TAG, "avY = " + avY);
 
-            deltaY = corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1];
-            deltaX = corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0];
-            turnAngle = -Math.atan(deltaY/deltaX);
+            for(int i=0; i<LOOP_MAX && dist1==dist; i++){
+                image = api.getMatNavCam();
+                //api.saveMatImage(image, ("target1center" + counter + ".png"));
+                Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+                avX = (float)((corners.get(1).get(0,0)[0] + corners.get(1).get(0,1)[0] + corners.get(2).get(0,3)[0] + corners.get(3).get(0,2)[0])/4.0);
+                avY = (float)((corners.get(1).get(0,0)[1] + corners.get(1).get(0,1)[1] + corners.get(2).get(0,3)[1] + corners.get(3).get(0,2)[1])/4.0);
+                dist = distance(avX, avY, laserPoint[0], laserPoint[1]);
+                try{Thread.sleep(50);}catch(InterruptedException e){Log.i(TAG, ""+e);}
+            }
+            dist1=dist;
 
             counter++;
         }
         counter=0;
-
-
+        //while(Math.abs(dist[0])>50 && )
 
         // irradiate the laser
         api.laserControl(true);
@@ -96,13 +135,9 @@ public class YourService extends KiboRpcService {
         api.saveMatImage(image, "target1Laser1.png");
         // turn the laser off
         api.laserControl(false);
-        quaternion = multiply(quaternion, xRotation(270));
-        for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
-            result = api.moveTo(point, quaternion, true);
-        }
-        image = api.getMatNavCam();
-        image = api.getMatNavCam();
-        api.saveMatImage(image, "45RotateX.png");
+        quaternion = multiply(quaternion, yRotation(135));
+
+
 
         /* ******************************************** */
         /* write your own code and repair the air leak! */
@@ -154,14 +189,19 @@ public class YourService extends KiboRpcService {
         return new Quaternion(x, y, z, w);
     }
     //creates basic quaternions that can be used to rotate robot orientation
-    public Quaternion zRotation(double angle){
+    public Quaternion zRotation(float angle){
         return new Quaternion(0, 0, (float)Math.sin(Math.toRadians(angle/2)), (float)Math.cos(Math.toRadians(angle/2)));
     }
-    public Quaternion xRotation(double angle){
+    public Quaternion xRotation(float angle){
         return new Quaternion((float)Math.sin(Math.toRadians(angle/2)), 0, 0, (float)Math.cos(Math.toRadians(angle/2)));
     }
-    public Quaternion yRotation(double angle){
+    public Quaternion yRotation(float angle){
         return new Quaternion(0, (float)Math.sin(Math.toRadians(angle/2)), 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public float distance(float x1, float y1, float x2, float y2){
+        float deltaX = x1-x2;
+        float deltaY = y1-y2;
+        return (float)(Math.sqrt(deltaX*deltaX + deltaY*deltaY));
     }
 
 }
