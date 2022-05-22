@@ -20,7 +20,7 @@ import java.util.ArrayList;
 public class YourService extends KiboRpcService {
 
     private final String TAG = this.getClass().getSimpleName();
-    private final float[] degreePerPixel = {01.020f, 01.1f};
+    private final float[] degreePerPixel = {0.10156f, 0.10156f};
     @Override
     protected void runPlan1(){
         // the mission starts
@@ -93,7 +93,7 @@ public class YourService extends KiboRpcService {
         Log.i(TAG, "avY = " + avY);
         while((dist>(deltaP*3/5.0f)) && counter<LOOP_MAX){
             quaternion = multiply(quaternion, xRotation(degreePerPixel[0]*(laserPoint[0]-avX)));
-            quaternion = multiply(quaternion, yRotation(degreePerPixel[1]*(avY-laserPoint[1])));
+            quaternion = multiply(quaternion, yRotation(degreePerPixel[1]*(laserPoint[1]-avY)));
             for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
                 result = api.moveTo(point, quaternion, true);
             }
