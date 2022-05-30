@@ -1,0 +1,536 @@
+package jp.jaxa.iss.kibo.rpc.defaultapk;
+
+import android.graphics.Bitmap;
+import android.util.Log;
+
+import gov.nasa.arc.astrobee.Kinematics;
+import jp.jaxa.iss.kibo.rpc.api.KiboRpcService;
+
+import gov.nasa.arc.astrobee.Result;
+import gov.nasa.arc.astrobee.types.Point;
+import gov.nasa.arc.astrobee.types.Quaternion;
+
+import org.opencv.core.Mat;
+import org.opencv.aruco.*;
+import org.opencv.core.CvType;
+import org.opencv.imgproc.Imgproc;
+//import org.opencv.imgproc.*;
+
+
+
+import java.util.ArrayList;
+import java.util.Arrays;
+
+
+/**
+ * Class meant to handle commands from the Ground Data System and execute them in Astrobee
+ */
+
+public class YourService extends KiboRpcService {
+    //final String TAG = "Salcedo";
+    final int MAX_TRY = 3;
+    private final String TAG = this.getClass().getSimpleName();
+    private final float[] degreePerPixel = {01.020f, 01.1f};
+
+
+    @Override
+    protected void runPlan1(){
+        // the mission starts
+        Log.i(TAG, "start mission");
+        api.startMission();
+
+
+    /*    Position (x, y, z) = (10.76150, -6.88490, 5.31647)
+        Orientation (x, y, z, w) = (0, 0, -0.707, 0.707)
+
+        The Point1 coordinates are;
+        Position (x, y, z) = (10.71000, -7.70000, 4.48000))
+        Orientation (x, y, z, w) = (0, 0.707, 0, 0.707)
+
+        The position of Point 2 is as follows:
+        Position (x, y, z) = (11.27460, -9.92284, 5.29881)
+        Orientation (x, y, z, w) = (0, 0, -0.707, 0.707)
+
+        The goal position is as follows:
+        Position (x, y, z) = (11.27460, -7.89178, 4.96538)
+        Orientation (x, y, z, w) = (0, 0, -0.707, 0.707)
+
+        Target 1 distance from AR code center to target center ->(|x|,|z|) 10.00 cm, 3.75 cm
+        Target 2 distance from AR code center to target center ->(|x|,|z|) 11.25 cm, 4.15 cm with random variance of 2.5cm
+
+        step 1. getNavCamIntrinsics() -> Camera matrix and distortion coefficients
+        step 1a. get image
+        step 2. undistort -> undistorted image for aruco detect markers
+        step 3. Aruco.detectMarkers() -> corners, ids
+        setp 4. Aruco.estimatePoseBoard() -> rotation vector and translation vector
+        step 5. compute new point1 using translation vector + camera position
+        step 6. compute new point2 using laser position
+        step 7. move astrobee to new point2
+        step 8. light laser
+
+
+
+
+*/
+
+        final double navCamIntrinsics[][]  = api.getNavCamIntrinsics();
+        final Mat navCamMat = new Mat(3,3,CvType.CV_64FC1);
+        final Mat navCamDistCoef = new Mat(1,5,CvType.CV_64FC1);
+        final double dockCamIntrinsics [][] = api.getDockCamIntrinsics();
+        final Board target1board = GridBoard.create(2,2,.05f,.20f,Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250),1);
+        final Board target2board = GridBoard.create(2,2,.05f,.225f,Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250),11);
+
+        Log.i(TAG, "navCamIntrinsics.length :"+navCamIntrinsics.length);
+        for(int i=0;i<navCamIntrinsics.length;i++) {
+            Log.i(TAG, "navCamIntrinsics[i].length :" + navCamIntrinsics[i].length);
+            for (int j = 0; j < navCamIntrinsics[i].length; j++) {
+                Log.i(TAG, "-" + i + "-" + j + " => " + navCamIntrinsics[i][j]);
+            }
+        }
+
+        int j=0;
+        for(int i=0; i<9 ; i++){
+            navCamMat.put(j,(i+1)%3, navCamIntrinsics[0][i]);
+            Log.i(TAG+": NavCamIntrinsics Mat :",i+" , "+navCamIntrinsics[0][i]);
+            if((i+1)%3 == 0) {
+                j=0;
+            }else {
+                j += 1;
+            }
+        }
+
+        for(int i=0; i<5 ; i++){
+            navCamDistCoef.put(0,i, navCamIntrinsics[1][i]);
+            Log.i(TAG+": NavCamIntrinsics Dist :",i+" , "+navCamIntrinsics[1][i]);
+        }
+
+        Point point1 = new Point(10.710000f, -7.70000f, 4.48000f);
+        Quaternion quaternion1 = computeQuaternion(0, 89, 23);
+        Kinematics.Confidence result = moveAstrobee(point1, quaternion1, 'P',true);
+
+        final int LOOP_MAX = 3;
+        //make sure robot reached point
+        //  for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+        //     result = api.moveTo(point2, quaternion2, true);
+        //}
+        // report point1 arrival
+        api.reportPoint1Arrival();
+
+        // get a camera image
+        Mat image = api.getMatNavCam();
+        Mat imageCrtd = image;
+
+        Log.i(TAG,"Distortion Total :"+navCamDistCoef.total());
+        api.saveMatImage(image, "ogOrientation.png");
+
+        //      Imgproc.undistort(image,imageCrtd,navCamMat,navCamDistCoef);
+        //      api.saveMatImage(imageCrtd, "ogOrientationUnDistorted.png");
+
+
+
+        ArrayList<Mat> corners = new ArrayList<Mat>();
+        Mat ids = new Mat();
+
+        Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+        //     Aruco.calibrateCameraAruco()
+        //     Aruco.estimatePoseBoard(corners,ids,target1board,navCamMat, navCamDistCoef);
+        // irradiate the laser
+        api.laserControl(true);
+
+        Bitmap bmpimage = api.getBitmapNavCam();
+        api.saveBitmapImage(bmpimage,"target1Laserbmp.jpg");
+        // take target1 snapshots
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target1Laser.png");
+        api.takeTarget1Snapshot();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target1Laser1.png");
+        // turn the laser off
+        api.laserControl(false);
+
+
+//        Point point2 = new Point(10.710000f, -7.70000f, 4.48000f);
+
+        Point point2_a = new Point(11.15865f, -10.08813f, 4.48000f);
+        Quaternion quaternion2_a = computeQuaternion(0, -89, -23);
+        result = moveAstrobee(point2_a, quaternion2_a, 'P',true);
+        Point point2 = new Point(11.1067f, -10.08813f, 4.48000f);
+//        Quaternion goalQuaternion = computeQuaternion(0, -65, -85);
+        Quaternion quaternion2 = computeQuaternion(0, 0, -85);
+        result = moveAstrobee(point2, quaternion2, 'P',true);
+        Point point2_final = new Point(11.1667f, -10.08813f, 5.43000f);
+        quaternion2 = computeQuaternion(0, 0, -85);
+        result = moveAstrobee(point2_final, quaternion2, 'P',true);
+
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "goalOrientation.png");
+        Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+
+        Mat circles =new Mat();
+        Log.i(TAG,"Finding HoughCircles");
+        Imgproc.HoughCircles(image,circles,Imgproc.HOUGH_GRADIENT,1,20);
+        Log.i(TAG,"Found HoughCircles. Printing...");
+        Log.i(TAG, "Image Width :" +image.size().width );
+        Log.i(TAG, "Image Height :" +image.size().height );
+        for (int x = 0; x < circles.cols(); x++) {
+            double[] c = circles.get(0, x);
+            Log.i(TAG," Circle Center :"+c[0]+","+c[1]);
+            // Point center = new Point(c[0], c[1]);
+            //Dump =>[803.5, 619.5, 40]
+            //  Image Width :1280.0
+            // Image Height :960.0
+   /*
+
+5-29 10:27:52.685 I/KiboRpcApi( 1726): [Finish] getDockCamIntrinsics
+05-29 10:27:52.685 I/YourService( 1726): navCamIntrinsics.length :2
+05-29 10:27:52.685 I/YourService( 1726): navCamIntrinsics[i].length :9
+05-29 10:27:52.685 I/YourService( 1726): -0-0 => 567.229305
+05-29 10:27:52.685 I/YourService( 1726): -0-1 => 0.0
+05-29 10:27:52.685 I/YourService( 1726): -0-2 => 659.077221
+05-29 10:27:52.685 I/YourService( 1726): -0-3 => 0.0
+05-29 10:27:52.685 I/YourService( 1726): -0-4 => 574.192915
+05-29 10:27:52.685 I/YourService( 1726): -0-5 => 517.007571
+05-29 10:27:52.685 I/YourService( 1726): -0-6 => 0.0
+05-29 10:27:52.685 I/YourService( 1726): -0-7 => 0.0
+05-29 10:27:52.685 I/YourService( 1726): -0-8 => 1.0
+05-29 10:27:52.685 I/YourService( 1726): navCamIntrinsics[i].length :5
+05-29 10:27:52.685 I/YourService( 1726): -1-0 => -0.216247
+05-29 10:27:52.685 I/YourService( 1726): -1-1 => 0.03875
+05-29 10:27:52.685 I/YourService( 1726): -1-2 => -0.010157
+05-29 10:27:52.685 I/YourService( 1726): -1-3 => 0.001969
+05-29 10:27:52.685 I/YourService( 1726): -1-4 => 0.0
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 0 , 567.229305
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 1 , 0.0
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 2 , 659.077221
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 3 , 0.0
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 4 , 574.192915
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 5 , 517.007571
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 6 , 0.0
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 7 , 0.0
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Mat :( 1726): 8 , 1.0
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Dist :( 1726): 0 , -0.216247
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Dist :( 1726): 1 , 0.03875
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Dist :( 1726): 2 , -0.010157
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Dist :( 1726): 3 , 0.001969
+05-29 10:27:52.685 I/YourService: NavCamIntrinsics Dist :( 1726): 4 , 0.0
+
+    */
+        }
+
+        Log.i(TAG,"Dump =>"+circles.dump());
+        Log.i(TAG,"Printed HoughCircles.");
+        api.laserControl(true);
+
+        bmpimage = api.getBitmapNavCam();
+        api.saveBitmapImage(bmpimage,"target2Laserbmp.jpg");
+        // take target2 snapshots
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target2Laser.png");
+        api.takeTarget2Snapshot();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target2Laser1.png");
+        // turn the laser off
+        api.laserControl(false);
+        Log.i(TAG,"Moving to Reporting position");
+        Point reportPosition_a = new Point(10.4870f, -9.44819f, 5.28000f);
+        Quaternion reportQuaternion_a = computeQuaternion(0, 0, -85);
+        result = moveAstrobee(reportPosition_a, reportQuaternion_a, 'P',true);
+        Log.i(TAG,"Moved half way to Reporting position");
+        Point reportPosition = new Point(11.27460f, -7.89178f, 4.96538f);
+        Quaternion reportQuaternion = new Quaternion(0f, 0f, -0.707f, 0.707f);
+        result = moveAstrobee(reportPosition, reportQuaternion, 'P',true);
+        Log.i(TAG,"Moved to Reporting position");
+/*
+
+
+
+        // move to a point
+        Point point = new Point(10.710000f, -7.70000f, 4.48000f);
+        Quaternion quaternion = new Quaternion(0.0f, 0.707f, 0.0f, 0.707f);
+        //Quaternion rotation = Quaternion.fromRotationXYZ(0, 0, 0);
+        Result result = api.moveTo(point, quaternion, true);
+
+        final int LOOP_MAX = 15;
+        //make sure robot reached point
+        for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+            result = api.moveTo(point, quaternion, true);
+        }
+
+        // report point1 arrival
+        api.reportPoint1Arrival();
+
+        // get a camera image
+        Mat image = api.getMatNavCam();
+        api.saveMatImage(image, "ogOrientation.png");
+        ArrayList<Mat> corners = new ArrayList<Mat>();
+        Mat ids = new Mat();
+        Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+
+        float deltaY = (float)(corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1]);
+        float deltaX = (float)(corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0]);
+
+        float turnAngle = (float)(-Math.atan(deltaY/deltaX));
+        //float turnAngle1 = turnAngle;
+        int counter = 0;
+        //while(Math.abs(turnAngle) > Math.PI/100.0 && counter<LOOP_MAX){
+        quaternion = multiply(quaternion, zRotation(turnAngle));
+        for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+            result = api.moveTo(point, quaternion, true);
+        }
+        //image = api.getMatNavCam();
+        //Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+        //deltaY = (float)(corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1]);
+        //deltaX = (float)(corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0]);
+        //turnAngle = (float)(-Math.atan(deltaY/deltaX));
+        //for(int i=0; i<LOOP_MAX && turnAngle1==turnAngle; i++){
+        //image = api.getMatNavCam();
+        //Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+        //deltaY = (float)(corners.get(1).get(0,2)[1] - corners.get(0).get(0,1)[1]);
+        //deltaX = (float)(corners.get(1).get(0,2)[0] - corners.get(0).get(0,1)[0]);
+        //turnAngle = (float)(-Math.atan(deltaY/deltaX));
+        //try{Thread.sleep(10);}catch(InterruptedException e){Log.i(TAG, ""+e);}
+        //}
+        //turnAngle1 = turnAngle;
+
+        //counter++;
+        //}
+        counter=0;
+        float avX = (float)((corners.get(1).get(0,0)[0] + corners.get(1).get(0,1)[0] + corners.get(2).get(0,3)[0] + corners.get(3).get(0,2)[0])/4.0);
+        float avY = (float)((corners.get(1).get(0,0)[1] + corners.get(1).get(0,1)[1] + corners.get(2).get(0,3)[1] + corners.get(3).get(0,2)[1])/4.0);
+        float deltaP = distance((float)corners.get(1).get(0,0)[0], (float)corners.get(1).get(0,0)[1], (float)corners.get(1).get(0,1)[0], (float)corners.get(1).get(0,1)[1]);
+        float[] laserPoint = {(640f + (9.94f*deltaP/5.0f)), (480+deltaP*0.0057f)};
+        //float dist[] = {1280f-avX, 960-avY};
+        float dist = distance(avX, avY, laserPoint[0], laserPoint[1]);
+        float dist1=dist;
+        Log.i(TAG, "deltaP = " + deltaP);
+        Log.i(TAG, "Laser point = (" + laserPoint[0] + ", " + laserPoint[1] + ")");
+
+        Log.i(TAG, "dist = " + dist);
+        Log.i(TAG, "avX = " + avX);
+        Log.i(TAG, "avY = " + avY);
+        while((dist>(deltaP*3/5.0f)) && counter<LOOP_MAX){
+            quaternion = multiply(quaternion, xRotation(degreePerPixel[0]*(laserPoint[0]-avX)));
+            quaternion = multiply(quaternion, yRotation(degreePerPixel[1]*(avY-laserPoint[1])));
+            for(int i=0; i<LOOP_MAX && !result.hasSucceeded(); i++){
+                result = api.moveTo(point, quaternion, true);
+            }
+            image = api.getMatNavCam();
+            api.saveMatImage(image, ("target1center" + counter + ".png"));
+            Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+            avX = (float)((corners.get(1).get(0,0)[0] + corners.get(1).get(0,1)[0] + corners.get(2).get(0,3)[0] + corners.get(3).get(0,2)[0])/4.0);
+            avY = (float)((corners.get(1).get(0,0)[1] + corners.get(1).get(0,1)[1] + corners.get(2).get(0,3)[1] + corners.get(3).get(0,2)[1])/4.0);
+            dist = distance(avX, avY, laserPoint[0], laserPoint[1]);
+            Log.i(TAG, "dist = " + dist);
+            Log.i(TAG, "avX = " + avX);
+            Log.i(TAG, "avY = " + avY);
+
+            for(int i=0; i<LOOP_MAX && dist1==dist; i++){
+                image = api.getMatNavCam();
+                //api.saveMatImage(image, ("target1center" + counter + ".png"));
+                Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+                avX = (float)((corners.get(1).get(0,0)[0] + corners.get(1).get(0,1)[0] + corners.get(2).get(0,3)[0] + corners.get(3).get(0,2)[0])/4.0);
+                avY = (float)((corners.get(1).get(0,0)[1] + corners.get(1).get(0,1)[1] + corners.get(2).get(0,3)[1] + corners.get(3).get(0,2)[1])/4.0);
+                dist = distance(avX, avY, laserPoint[0], laserPoint[1]);
+                try{Thread.sleep(50);}catch(InterruptedException e){Log.i(TAG, ""+e);}
+            }
+            dist1=dist;
+
+            counter++;
+        }
+        counter=0;
+        //while(Math.abs(dist[0])>50 && )
+
+        // irradiate the laser
+        api.laserControl(true);
+
+        // take target1 snapshots
+        image = api.getMatNavCam();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target1Laser.png");
+        api.takeTarget1Snapshot();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target1Laser1.png");
+        // turn the laser off
+        api.laserControl(false);
+        quaternion = multiply(quaternion, yRotation(135));
+
+
+
+        /* ******************************************** */
+        /* write your own code and repair the air leak! */
+        /* ******************************************** */
+
+        // send mission completion
+        api.reportMissionCompletion();
+    }
+
+
+    @Override
+    protected void runPlan2(){
+        // write here your plan 2
+    }
+
+    @Override
+    protected void runPlan3(){
+        // write here your plan 3
+    }
+
+    // You can add your method
+    private void moveToWrapper(double pos_x, double pos_y, double pos_z,
+                               double qua_x, double qua_y, double qua_z,
+                               double qua_w){
+
+        final Point point = new Point(pos_x, pos_y, pos_z);
+        final Quaternion quaternion = new Quaternion((float)qua_x, (float)qua_y,
+                (float)qua_z, (float)qua_w);
+
+        api.moveTo(point, quaternion, true);
+    }
+
+    private void relativeMoveToWrapper(double pos_x, double pos_y, double pos_z,
+                                       double qua_x, double qua_y, double qua_z,
+                                       double qua_w) {
+
+        final Point point = new Point(pos_x, pos_y, pos_z);
+        final Quaternion quaternion = new Quaternion((float) qua_x, (float) qua_y,
+                (float) qua_z, (float) qua_w);
+
+        api.relativeMoveTo(point, quaternion, true);
+    }
+
+    public Quaternion multiply(Quaternion q, Quaternion r){ //proper way to rotate a quaternion. QUAT MULTIPLICATION NOT COMMUNICATIVE
+        float w = q.getW()*r.getW() - q.getX()*r.getX() - q.getY()*r.getY() - q.getZ()*r.getZ();
+        float x = q.getX()*r.getW() + q.getW()*r.getX() + q.getY()*r.getZ() - q.getZ()*r.getY();
+        float y = q.getY()*r.getW() + q.getW()*r.getY() + q.getZ()*r.getX() - q.getX()*r.getZ();
+        float z = q.getZ()*r.getW() + q.getW()*r.getZ() + q.getX()*r.getY() + q.getY()*r.getX();
+
+        return new Quaternion(x, y, z, w);
+    }
+    //creates basic quaternions that can be used to rotate robot orientation
+    public Quaternion zRotation(float angle){
+        return new Quaternion(0, 0, (float)Math.sin(Math.toRadians(angle/2)), (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public Quaternion xRotation(float angle){
+        return new Quaternion((float)Math.sin(Math.toRadians(angle/2)), 0, 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public Quaternion yRotation(float angle){
+        return new Quaternion(0, (float)Math.sin(Math.toRadians(angle/2)), 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public float distance(float x1, float y1, float x2, float y2){
+        float deltaX = x1-x2;
+        float deltaY = y1-y2;
+        return (float)(Math.sqrt(deltaX*deltaX + deltaY*deltaY));
+    }
+
+    protected Kinematics.Confidence moveAstrobee(Point point, Quaternion quaternion, char moveType, Boolean printRobotPosition)
+    {
+        //Qua_x 0.7071068 Astrobee spin right
+        //QUa_x -0.7071068 Astrobee spin left
+        //Qua_y  1    Astrobee look up
+        //Qua_y -1    Astrobee look down
+        //Qua_w  1    Astrobee turn right
+        //Qua_W -1    Astrobee turn left
+
+        Result result;
+
+        double dX, dY, dZ;
+        float dOX,dOY,dOZ,dOW;
+
+        Point currentPoint ;
+        Quaternion currentQuaternion1;
+        Kinematics.Confidence currentPositionConfidence;
+        Kinematics kinematics = null;
+
+        final double [] kIZ2_min_data = {9.5, -10.5, 4.02};
+        final double [] kIZ2_max_data = {10.5, -9.6, 4.8};
+        final double [] kIZ1_min_data = {10.3, -10.2, 4.32};
+        final double [] kIZ1_max_data = {11.55 ,-6.4, 5.57};
+
+        final Vector kIZ2_min = new Vector(kIZ2_min_data);
+        final Vector  kIZ2_max = new Vector(kIZ2_max_data);
+        final Vector  kIZ1_min = new Vector(kIZ1_min_data);
+        final Vector  kIZ1_max = new Vector(kIZ1_max_data);
+
+        Vector moveToPoint = new Vector(point);
+        if(moveToPoint.distanceTo(kIZ1_max)<0.05){
+            point = moveToPoint.minusScalar(0.05).toPoint();
+            Log.i(TAG,"Restricted movement due to KIZ 1 max violation");
+        }
+        if(kIZ1_min.distanceTo(moveToPoint)<0.05){
+            point = moveToPoint.minusScalar(-0.05).toPoint();
+            Log.i(TAG,"Restricted movement due to KIZ 1 min violation");
+        }
+
+
+        if(moveType=='R') {
+            result = api.relativeMoveTo(point, quaternion, printRobotPosition);
+        }else{
+            result = api.moveTo(point, quaternion, printRobotPosition);
+            Log.i(TAG,"Moved");
+        }
+        int noOfTry = 0;
+        while(!result.hasSucceeded() && noOfTry < MAX_TRY){
+
+            if(moveType=='R') {
+                result = api.relativeMoveTo(point, quaternion, printRobotPosition);
+            }else{
+                result = api.moveTo(point, quaternion, printRobotPosition);
+                Log.i(TAG,"Moving Loop " + noOfTry);
+            }
+            ++noOfTry;
+        }
+
+        return (Kinematics.Confidence.GOOD);
+    }
+    /************************************************************/
+    /* computeQuaternion()
+    /* Uses global values of yaw, pitch, roll to compute the
+    /* quaternion.
+    /*      rotation x - roll
+    /*              y - pitch
+     /*             z - yaw
+    /************************************************************/
+    protected Quaternion computeQuaternion(double roll,double pitch, double yaw)
+    {
+        //Precompute sine and cosine values.
+        //Input Euler Angles are in degrees
+        double su = (double) Math.sin(roll  *Math.PI/360);
+        double sv = (double)Math.sin(pitch*Math.PI/360);
+        double sw = (double)Math.sin(yaw *Math.PI/360);
+        double cu = (double)Math.cos(roll  *Math.PI/360);
+        double cv = (double)Math.cos(pitch*Math.PI/360);
+        double cw = (double)Math.cos(yaw *Math.PI/360);
+
+        //Quaternion
+        float q0 = 1.0f;
+        float q1 = 0.0f;
+        float q2 = 0.0f;
+        float q3 = 0.0f;
+
+        q0 = (float)(cu*cv*cw + su*sv*sw);
+        q1 = (float)(su*cv*cw - cu*sv*sw);
+        q2 = (float)(cu*sv*cw + su*cv*sw);
+        q3 = (float)(cu*cv*sw - su*sv*cw);
+
+        //Display Quaternion, rounded to three sig. figs.
+        q0 = (float)Math.floor(q0*10000)/10000;
+        q1 = (float)Math.floor(q1*10000)/10000;
+        q2 = (float)Math.floor(q2*10000)/10000;
+        q3 = (float)Math.floor(q3*10000)/10000;
+
+
+        return(new Quaternion (q1,q2,q3,q0));
+    }
+
+    protected double[] multiplyQuaternion( double r0, double r1, double r2, double r3, double s0, double s1, double s2, double s3 )
+    {
+        double[] q = {0f, 0f, 0f, 0f};
+
+        q[0] = r0*s0-r1*s1-r2*s2-r3*s3;
+        q[1] = r0*s1+r1*s0-r2*s3+r3*s2;
+        q[2] = r0*s2+r1*s3+r2*s0-r3*s1;
+        q[3] = r0*s3-r1*s2+r2*s1+r3*s0;
+        return( q );
+    }
+
+}
