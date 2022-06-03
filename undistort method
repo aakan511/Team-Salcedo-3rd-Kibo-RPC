@@ -1,0 +1,23 @@
+    public Mat getNavCamImage(){
+        double[][] distortion = api.getNavCamIntrinsics(); //gets camera distortion
+        Mat src = api.getMatNavCam(); //input image
+        Mat dst = new Mat();//output image
+        Mat camMat = new Mat().zeros(3, 3, CvType.CV_64FC(1));//intrinsic camera matrix initializer
+        Mat distortionCoefficients = new Mat().zeros(4, 1, CvType.CV_64FC(1)); //distortion coefficient initializer
+
+        for(int r=0; r<3; r++){ //fills intrinsic camera matrix with correct values
+            for(int c=0; c<3; c++) {
+                camMat.put(r, c, (distortion[0][3*r+c]));
+                Log.i(TAG, "camMat[" + r +", " + c + "] = " + camMat.get(r, c));
+                Log.i(TAG, "distortion[" + (3*r+c) + "] = " + distortion[0][3*r+c]);
+            }
+        }
+        for(int i=0; i<distortion[1].length-1; i++){ //fills distorition coefficient array with values
+            distortionCoefficients.put(i, 0, (distortion[1][i]));
+            Log.i(TAG, "distortionCoefficients[" + i + "] = " + distortionCoefficients.get(0,1));
+            Log.i(TAG, "distortion[" + i + "] = " + distortion[1][i]);
+        }
+        
+        org.opencv.imgproc.Imgproc.undistort(src, dst, camMat, distortionCoefficients); //undistorts image
+        return dst;
+    }
