@@ -1,0 +1,807 @@
+package jp.jaxa.iss.kibo.rpc.defaultapk;
+
+import android.graphics.Bitmap;
+import android.graphics.Matrix;
+import android.util.Log;
+
+import gov.nasa.arc.astrobee.Kinematics;
+import jp.jaxa.iss.kibo.rpc.api.KiboRpcService;
+
+import gov.nasa.arc.astrobee.Result;
+import gov.nasa.arc.astrobee.types.Point;
+import gov.nasa.arc.astrobee.types.Quaternion;
+
+import org.opencv.calib3d.Calib3d;
+import org.opencv.core.Core;
+import org.opencv.core.Mat;
+import org.opencv.aruco.*;
+import org.opencv.core.CvType;
+import org.opencv.core.MatOfDouble;
+import org.opencv.core.MatOfPoint2f;
+import org.opencv.core.MatOfPoint3f;
+import org.opencv.core.Scalar;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
+
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+
+/**
+ * Class meant to handle commands from the Ground Data System and execute them in Astrobee
+ */
+
+public class YourService extends KiboRpcService {
+    //final String TAG = "Salcedo";
+    final int MAX_TRY = 3;
+    final float markerLength = 0.05f;
+    private final String TAG = this.getClass().getSimpleName();
+    private final float[] degreePerPixel = {01.020f, 01.1f};
+
+
+    @Override
+    protected void runPlan1(){
+        // the mission starts
+        Log.i(TAG, "start mission");
+        api.startMission();
+
+
+    /*    Position (x, y, z) = (10.76150, -6.88490, 5.31647)
+        Orientation (x, y, z, w) = (0, 0, -0.707, 0.707)
+
+        The Point1 coordinates are;
+        Position (x, y, z) = (10.71000, -7.70000, 4.48000))
+        Orientation (x, y, z, w) = (0, 0.707, 0, 0.707)
+
+        The position of Point 2 is as follows:
+        Position (x, y, z) = (11.27460, -9.92284, 5.29881)
+        Orientation (x, y, z, w) = (0, 0, -0.707, 0.707)
+
+        The goal position is as follows:
+        Position (x, y, z) = (11.27460, -7.89178, 4.96538)
+        Orientation (x, y, z, w) = (0, 0, -0.707, 0.707)
+
+        Target 1 distance from AR code center to target center ->(|x|,|z|) 10.00 cm, 3.75 cm
+        Target 2 distance from AR code center to target center ->(|x|,|z|) 11.25 cm, 4.15 cm with random variance of 2.5cm
+
+        step 1. getNavCamIntrinsics() -> Camera matrix and distortion coefficients
+        step 1a. get image
+        step 2. undistort -> undistorted image for aruco detect markers
+        step 3. Aruco.detectMarkers() -> corners, ids
+        setp 4. Aruco.estimatePoseBoard() -> rotation vector and translation vector
+        step 5. compute new point1 using translation vector + camera position
+        step 6. compute new point2 using laser position
+        step 7. move astrobee to new point2
+        step 8. light laser
+
+
+
+
+*/
+
+
+
+        final double navCamIntrinsics[][]  = api.getNavCamIntrinsics();
+
+        final Mat navCamMat = getCameraMatrix();
+        final Mat navCamDistCoef =getDistCoeffs();
+        final double navCamToLaserDelta[] = {-0.0125f,	-0.0994f,	0.0285f};
+        Mat distortionCoefficients4 = new Mat().zeros(4, 1, CvType.CV_64FC(1));
+
+        ArrayList<Mat> corners = new ArrayList<Mat>();
+        List<Mat> new_corners = new ArrayList<>() ;
+        Mat ids = new Mat();
+
+
+
+        //      final MatOfDouble navCamDistCoef = new MatOfDouble(1,5,CvType.CV_64FC1);
+        final double dockCamIntrinsics [][] = api.getDockCamIntrinsics();
+//        Board target2board = GridBoard.create(2,2,.05f,.15f,Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250),11);
+
+ /*       int j=0,k=0;
+        for(int i=0; i<navCamIntrinsics[0].length ; i++){
+            navCamMat.put(j,k, navCamIntrinsics[0][i]);
+            Log.i(TAG+": NavCamIntrinsics Mat :",i+" , "+navCamIntrinsics[0][i]);
+            if((i+1)%3 == 0) {
+                j += 1;
+            }
+            k++;
+            if(k>2) k=0;
+        }
+        navCamMat.put(0,0,navCamTemp);
+        Log.i(TAG, "NavCAM MAT :"+navCamMat.dump());
+        for(int i=0; i<navCamIntrinsics[1].length ; i++){
+            navCamDistCoef.put(0,i, navCamIntrinsics[1][i]);
+            Log.i(TAG+": NavCamIntrinsics Mat :",i+" , "+navCamIntrinsics[1][i]);
+        }
+        Log.i(TAG, "navCamDistCoef MAT :"+navCamDistCoef.dump());
+        distortionCoefficients4 = navCamDistCoef.submat(0,0,0,3);
+        Log.i(TAG, "navCamDistCoef 4 MAT :"+distortionCoefficients4.dump());
+*/
+
+        navCamMat.put(0,0,Arrays.copyOfRange(navCamIntrinsics[0],0,8));
+        navCamDistCoef.put(0,0,Arrays.copyOfRange(navCamIntrinsics[1],0,4));
+
+        Log.i(TAG, "NavCAM MAT new :"+navCamMat.dump());
+        Log.i(TAG, "navCamDistCoef MAT new :"+navCamDistCoef.dump());
+
+        Point point1 = new Point(10.710000f, -7.70000f, 4.48000f);
+        Quaternion quaternion1 = computeQuaternion(0, 89, 23);
+        Kinematics.Confidence result = moveAstrobee(point1, quaternion1, 'P',true);
+
+        final int LOOP_MAX = 3;
+
+        api.reportPoint1Arrival();
+
+        // get a camera image
+        wait(2);
+        Mat image = api.getMatNavCam();
+        Mat imageCrtd =  new Mat(1280, 960, CvType.CV_8UC1);;
+
+        Log.i(TAG,"Distortion Total :"+navCamDistCoef.total());
+        api.saveMatImage(image, "1_ogOrientation.png");
+
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "2_ogOrientation_revised.png");
+        imageCrtd = undistort(image);
+        //Imgproc.undistort(image,imageCrtd,navCamMat,navCamDistCoef);
+        api.saveMatImage(imageCrtd, "3_ogOrientationUnDistorted_imgProcess.png");
+
+        Aruco.detectMarkers(imageCrtd, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+
+        // irradiate the laser
+        api.laserControl(true);
+
+        Bitmap bmpimage = api.getBitmapNavCam();
+        api.saveBitmapImage(bmpimage,"3_target1Laserbmp.jpg");
+        // take target1 snapshots
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "4_target1Laser.png");
+        api.takeTarget1Snapshot();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "5_target1Laser1.png");
+        // turn the laser off
+        api.laserControl(false);
+
+
+//        Point point2 = new Point(10.710000f, -7.70000f, 4.48000f);
+
+        Point point2_a = new Point(11.15865f, -10.08813f, 4.48000f);
+        Quaternion quaternion2_a = computeQuaternion(0, -89, -23);
+        result = moveAstrobee(point2_a, quaternion2_a, 'P',true);
+
+        Quaternion quaternion2 = computeQuaternion(0, 0, -87);
+
+//        Point point2_final = new Point(11.1667f, -9.88813f, 5.43000f);
+        Point point2_final = new Point(11.1367f, -9.88813f, 5.43000f);
+
+        result = moveAstrobee(point2_final, quaternion2, 'P',true);
+
+
+        Mat rvec = new Mat().setTo(Scalar.all(0));
+        Mat tvec = new Mat().setTo(Scalar.all(0));
+
+        Mat rotationMat = new Mat(3,3,CvType.CV_64FC1,Scalar.all(0.0f));
+        Mat iRotationMat = new Mat(3,3,CvType.CV_64FC1,Scalar.all(0.0f));
+        Mat iCamMat = new Mat(3,3,CvType.CV_64FC1,Scalar.all(0.0f));
+        Mat iCamMat_temp = new Mat(3,3,CvType.CV_64FC1,Scalar.all(0.0f));
+        Mat uv = new Mat(3,1,CvType.CV_64FC1,Scalar.all(1.0f));
+        Mat tempMat = new Mat(3,3,CvType.CV_64FC1,Scalar.all(0.0f));
+        Mat tempMat2 = new Mat(3,3,CvType.CV_64FC1,Scalar.all(0.0f));
+        Mat wcPoint = new Mat();
+        Mat circles = new Mat();
+        Mat temp = new Mat(1,8,CvType.CV_32FC3,Scalar.all(0.0f));
+        Mat tvecR1 = new Mat().zeros(new Size(1,3), CvType.CV_64FC1);
+
+
+        wait(5);
+
+        image = api.getMatNavCam();
+
+        api.saveMatImage(image, "6_goalOrientation.png");
+        imageCrtd = undistort(image);
+        //Imgproc.undistort(image,imageCrtd,navCamMat,navCamDistCoef);
+        api.saveMatImage(imageCrtd, "7_goalOrientationUndistorted_imgProcess.png");
+
+        //Detecting Aruco Markers
+        Log.i(TAG,"Detecting..");
+        Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+
+        //Get object points and image points based on Aruco Codes
+        Log.i(TAG,"Detected..");
+
+        double[][] arucoCodeCorner = {};
+
+        for(int i=0;i< corners.size();i++) {
+            Log.i(TAG, "corners :"+i+" ==> " + corners.get(i).dump());
+
+            corners.get(i).convertTo(temp,CvType.CV_32FC3);
+            Log.d(TAG,"TEMP TYPE :"+CvType.typeToString(temp.type()));
+            new_corners.add(i,temp);
+        }
+
+
+        Log.i(TAG,"ids :"+ids.dump());
+        Log.i(TAG,"new corner type is :"+CvType.typeToString(new_corners.get(0).type()));
+        Log.i(TAG,"corner type is :"+CvType.typeToString(corners.get(0).type()));
+
+        try{
+
+            Log.i(TAG,"estimating pose board Single Markers..");
+//            Aruco.estimatePoseSingleMarkers(corners,0.05f,navCamMat,navCamDistCoef,rvec,tvec,objPoints);
+            Aruco.estimatePoseSingleMarkers(corners,markerLength,navCamMat,navCamDistCoef,rvec,tvec);
+
+            Log.i(TAG, "rvec :"+rvec.dump());
+            Log.i(TAG, "tvec :"+tvec.dump());
+
+            Log.i(TAG, "Preparing drawings :");
+            Mat outputImage = image.clone();
+            Imgproc.cvtColor(outputImage,outputImage,Imgproc.COLOR_BayerGR2BGR_VNG);
+            org.opencv.core.Point p;
+
+            //Finding Hough Circles
+            Log.i(TAG,"Finding HoughCircles...testing");
+            Imgproc.HoughCircles(image,circles,Imgproc.HOUGH_GRADIENT,1,22,30.0f,50.0f,22,43);
+            Log.i(TAG,"Found HoughCircles. Printing...");
+            Log.i(TAG, "Image Width :" +image.size().width );
+            Log.i(TAG, "Image Height :" +image.size().height );
+
+            double[] center ={0.0f,0.0f};
+            double radius=0.0f;
+            for (int x = 0; x < circles.cols(); x++) {
+                double[] c = circles.get(0, x);
+                uv.put(0, 0, c[0]);
+                uv.put(1, 0, c[1]);
+                center[0] = c[0];
+                center[1] = c[1];
+                radius = c[2];
+                Log.i(TAG, " Circle Center :" + c[0] + "," + c[1]);
+                p = new org.opencv.core.Point(c[0], c[1]);
+                Imgproc.circle(outputImage, p, (int) c[2], new Scalar(255, 0, 0), 2);
+            }
+
+            double selectedId = 0;
+            //Drawing the axis
+            if (ids.total()> 0) {
+                Aruco.drawDetectedMarkers(outputImage, corners, ids);
+
+                Mat r = new Mat();
+                Mat t = new Mat();
+                Mat rvec_flipped = new Mat();
+                Mat tvec_flipped = new Mat();
+                for (int i = 0; i < ids.total(); i++) {
+                    if(i==0 || ids.get(i,0)[0] == 12){
+                        selectedId =  ids.get(i,0)[0];
+                        rvec.row(i).copyTo(rvec_flipped);
+                        tvec.row(i).copyTo(tvec_flipped);
+                    }
+                    rvec.row(i).copyTo(r);
+                    tvec.row(i).copyTo(t);
+                    Log.i(TAG, "r " + r.dump());
+                    Log.i(TAG, "t " + t.dump());
+                    Aruco.drawAxis(outputImage, navCamMat, navCamDistCoef, r, t, 0.1f);
+                }
+                p = new org.opencv.core.Point(center[0], center[1]);
+                Imgproc.circle(outputImage, p, (int) radius, new Scalar(0, 0, 255), 2);
+                Imgproc.circle(outputImage, new org.opencv.core.Point(navCamIntrinsics[0][2], navCamIntrinsics[0][5] ), 10, new Scalar(0, 255, 0), 5);
+                api.saveMatImage(outputImage, "detectedPoints.jpg");
+                Log.i(TAG, "Detected image is written");
+
+
+//                double[] rvec_flipped = new double[3];
+//                double[] tvec_flipped = new double[3];
+                Mat tvec_real = new Mat();
+
+                Log.i(TAG, "rvec before mul :" + rvec_flipped.dump());
+                Log.i(TAG, "tvec before mul :" + tvec_flipped.dump());
+                Log.i(TAG, "tvec :" + tvec_flipped.rows() + "-" + tvec_flipped.cols() + "-" + tvec_flipped.channels());
+
+                // rvec_flipped = mulMat(rvec_flipped, -1d);
+                Core.multiply(rvec_flipped, Scalar.all(-1),rvec_flipped);
+                // tvec_flipped = mulMat(tvec_flipped, -1d);
+                Core.multiply(tvec_flipped, Scalar.all(-1),tvec_flipped);
+                Log.i(TAG, "tvec flipped " + tvec_flipped.dump());
+                Log.i(TAG, "rvec flipped " + rvec_flipped.dump());
+                Calib3d.Rodrigues(rvec_flipped, rotationMat);
+                Log.i(TAG, "rotation matrix " + rotationMat.dump());
+                //
+                Log.i(TAG, "tvec flipped :" + tvec_flipped.rows() + "-" + tvec_flipped.cols() + "-" + tvec_flipped.channels());
+                tvecR1.put(0,0,tvec_flipped.get(0,0)[0]);
+                tvecR1.put(0,1,tvec_flipped.get(0,0)[1]);
+                tvecR1.put(0,2,tvec_flipped.get(0,0)[2]);
+                Log.i(TAG, "tvec R1 :" + tvecR1.rows() + "-" + tvecR1.cols() + "-" + tvecR1.channels());
+                Log.i(TAG, "navCam :" + navCamMat.rows() + "-" + navCamMat.cols() + "-" + navCamMat.channels());
+                Log.i(TAG, "navCamDstCoeff :" + navCamDistCoef.rows() + "-" + navCamDistCoef.cols() + "-" + navCamDistCoef.channels());
+                Log.i(TAG, "Rota :" + rotationMat.rows() + "-" + rotationMat.cols() + "-" + rotationMat.channels());
+
+                tvec_real = mulMat1(tvecR1,rotationMat);
+                // Core.gemm(tvec_flipped, rotationMat, 1, Mat.eye(1,3,CvType.CV_64FC1), 0, tvec_real, 0);
+                // Core.multiply(tvecR1,rotationMat,tvec_real);
+                Log.i(TAG, "core real tvec " + tvec_real.dump());
+
+
+
+
+                double adjustToCircleCenter[] = new double[2];
+                double pixelScale = 1.0f;
+
+                Log.i(TAG, "ids Total :" + ids.total());
+                Log.i(TAG, "ids Total :" + ids.rows() + "-" + ids.cols() + "-" + ids.channels());
+                Log.i(TAG, "ID :" + selectedId);
+                if (ids.total() > 0) {
+                    Log.i(TAG, "corner Total :" + corners.get(0).rows() + "-" + corners.get(0).cols() + "-" + corners.get(0).channels());
+
+                    Log.i(TAG, "Inside IF");
+                    Log.i(TAG, "Printing corners ");
+
+                    Log.i(TAG, "center :" + center[0] + "," + center[1]);
+
+
+                    if (selectedId == 11) {//4th pair i.e. Left Bottom
+                        adjustToCircleCenter[0] = Math.abs(corners.get(0).get(0, 3)[0] - center[0]) * -1;
+                        adjustToCircleCenter[1] = Math.abs(corners.get(0).get(0, 3)[1] - center[1]) * 1;
+
+                    } else if (selectedId == 12) {//3rd pair i.e. Right Bottom
+                        adjustToCircleCenter[0] = Math.abs(corners.get(0).get(0, 2)[0] - center[0]) * 1;
+                        adjustToCircleCenter[1] = Math.abs(corners.get(0).get(0, 2)[1] - center[1]) * 1;
+
+                    } else if (selectedId == 13) {//2nd pair i.e. Right Top
+                        adjustToCircleCenter[0] = Math.abs(corners.get(0).get(0, 1)[0] - center[0]) * 1;
+                        adjustToCircleCenter[1] = Math.abs(corners.get(0).get(0, 1)[1] - center[1]) * -1;
+
+                    } else if (selectedId == 14) {//1st pair i.e. Left Top
+                        adjustToCircleCenter[0] = Math.abs(corners.get(0).get(0, 0)[0] - center[0]) * -1;
+                        adjustToCircleCenter[1] = Math.abs(corners.get(0).get(0, 0)[0] - center[1]) * -1;
+                    }
+                    //Aruco code size is 5cm with the NavCam Resolution it is approx 43 pixels
+                    //Thus, approx 8.55 pixels is taken as 1 cm
+                    Log.i(TAG, "before pix Adjust to Circle x :" + adjustToCircleCenter[0]);
+                    Log.i(TAG, "before pix Adjust to Circle y :" + adjustToCircleCenter[1]);
+
+                    pixelScale = 8.55f;
+                    adjustToCircleCenter[0] = adjustToCircleCenter[0] / pixelScale / 100;
+                    adjustToCircleCenter[1] = adjustToCircleCenter[1] / pixelScale / 100;
+                }
+                Log.i(TAG, "Adjust to Circle x :" + adjustToCircleCenter[0]);
+                Log.i(TAG, "Adjust to Circle y :" + adjustToCircleCenter[1]);
+                Log.i(TAG, "RotationMatrix :" + rotationMat.dump());
+
+
+                Log.i(TAG, "NavCamMat :" + navCamMat.dump());
+
+
+                Log.i(TAG, "Dump =>" + circles.dump());
+                Log.i(TAG, "Printed HoughCircles.");
+
+
+//X: red, Y: green, Z: blue
+//Z as x, Y as z, X as y
+
+                result = moveAstrobee(new Point(tvec_real.get(2, 0)[0],
+                        0, tvec_real.get(1, 0)[0]), quaternion2, 'R', true);
+                wait(2);
+                image = api.getMatNavCam();
+                Imgproc.cvtColor(outputImage,outputImage,Imgproc.COLOR_BayerGR2BGR_VNG);
+                Imgproc.circle(outputImage, new org.opencv.core.Point(image.size().width/2, image.size().height/2 ), 10, new Scalar(0, 255, 0), 5);
+                api.saveMatImage(outputImage, "AdjustedToAruco.jpg");
+                result = moveAstrobee(new Point(
+                        (navCamToLaserDelta[0] + adjustToCircleCenter[0])
+                        , 0.0
+                        , (navCamToLaserDelta[2] + adjustToCircleCenter[1]) ), quaternion2, 'R', true);
+//----        result = moveAstrobee(new Point(tvec.get(2,0)[0]+navCamToLaserDelta[0], 0,
+//----                tvec.get(0,0)[0]+navCamToLaserDelta[2]), quaternion2, 'R',true);
+                wait(3);
+            }
+        }catch (Exception e){
+            Log.i(TAG,"Error: "+e.getMessage());
+        }
+
+        api.laserControl(true);
+        bmpimage = api.getBitmapNavCam();
+        api.saveBitmapImage(bmpimage,"target2Laserbmp.jpg");
+        // take target2 snapshots
+        wait(2);
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target2Laser.png");
+        api.takeTarget2Snapshot();
+        image = api.getMatNavCam();
+        api.saveMatImage(image, "target2Laser1.png");
+        // turn the laser off
+        api.laserControl(false);
+        Log.i(TAG,"Moving to Reporting position");
+        Point reportPosition_a = new Point(10.4870f, -9.44819f, 5.28000f);
+        Quaternion reportQuaternion_a = computeQuaternion(0, 0, -85);
+        result = moveAstrobee(reportPosition_a, reportQuaternion_a, 'P',true);
+        Log.i(TAG,"Moved half way to Reporting position");
+        Point reportPosition = new Point(11.27460f, -7.89178f, 4.96538f);
+        Quaternion reportQuaternion = new Quaternion(0f, 0f, -0.707f, 0.707f);
+        result = moveAstrobee(reportPosition, reportQuaternion, 'P',true);
+        Log.i(TAG,"Moved to Reporting position");
+
+
+        /* ******************************************** */
+        /* write your own code and repair the air leak! */
+        /* ******************************************** */
+
+        // send mission completion
+        api.reportMissionCompletion();
+    }
+
+
+    @Override
+    protected void runPlan2(){
+        // write here your plan 2
+    }
+
+    @Override
+    protected void runPlan3(){
+        // write here your plan 3
+    }
+
+    // You can add your method
+    private void moveToWrapper(double pos_x, double pos_y, double pos_z,
+                               double qua_x, double qua_y, double qua_z,
+                               double qua_w){
+
+        final Point point = new Point(pos_x, pos_y, pos_z);
+        final Quaternion quaternion = new Quaternion((float)qua_x, (float)qua_y,
+                (float)qua_z, (float)qua_w);
+
+        api.moveTo(point, quaternion, true);
+    }
+
+    private void relativeMoveToWrapper(double pos_x, double pos_y, double pos_z,
+                                       double qua_x, double qua_y, double qua_z,
+                                       double qua_w) {
+
+        final Point point = new Point(pos_x, pos_y, pos_z);
+        final Quaternion quaternion = new Quaternion((float) qua_x, (float) qua_y,
+                (float) qua_z, (float) qua_w);
+
+        api.relativeMoveTo(point, quaternion, true);
+    }
+
+    public Quaternion multiply(Quaternion q, Quaternion r){ //proper way to rotate a quaternion. QUAT MULTIPLICATION NOT COMMUNICATIVE
+        float w = q.getW()*r.getW() - q.getX()*r.getX() - q.getY()*r.getY() - q.getZ()*r.getZ();
+        float x = q.getX()*r.getW() + q.getW()*r.getX() + q.getY()*r.getZ() - q.getZ()*r.getY();
+        float y = q.getY()*r.getW() + q.getW()*r.getY() + q.getZ()*r.getX() - q.getX()*r.getZ();
+        float z = q.getZ()*r.getW() + q.getW()*r.getZ() + q.getX()*r.getY() + q.getY()*r.getX();
+
+        return new Quaternion(x, y, z, w);
+    }
+    //creates basic quaternions that can be used to rotate robot orientation
+    public Quaternion zRotation(float angle){
+        return new Quaternion(0, 0, (float)Math.sin(Math.toRadians(angle/2)), (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public Quaternion xRotation(float angle){
+        return new Quaternion((float)Math.sin(Math.toRadians(angle/2)), 0, 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public Quaternion yRotation(float angle){
+        return new Quaternion(0, (float)Math.sin(Math.toRadians(angle/2)), 0, (float)Math.cos(Math.toRadians(angle/2)));
+    }
+    public float distance(float x1, float y1, float x2, float y2){
+        float deltaX = x1-x2;
+        float deltaY = y1-y2;
+        return (float)(Math.sqrt(deltaX*deltaX + deltaY*deltaY));
+    }
+
+    protected Kinematics.Confidence moveAstrobee(Point point, Quaternion quaternion, char moveType, Boolean printRobotPosition)
+    {
+        //Qua_x 0.7071068 Astrobee spin right
+        //QUa_x -0.7071068 Astrobee spin left
+        //Qua_y  1    Astrobee look up
+        //Qua_y -1    Astrobee look down
+        //Qua_w  1    Astrobee turn right
+        //Qua_W -1    Astrobee turn left
+
+        Result result;
+
+        double dX, dY, dZ;
+        float dOX,dOY,dOZ,dOW;
+
+        Point currentPoint ;
+        Quaternion currentQuaternion1;
+        Kinematics.Confidence currentPositionConfidence;
+        Kinematics kinematics = null;
+
+        final double [] kIZ2_min_data = {9.5, -10.5, 4.02};
+        final double [] kIZ2_max_data = {10.5, -9.6, 4.8};
+        final double [] kIZ1_min_data = {10.3, -10.2, 4.32};
+        final double [] kIZ1_max_data = {11.55 ,-6.4, 5.57};
+
+        final Vector kIZ2_min = new Vector(kIZ2_min_data);
+        final Vector  kIZ2_max = new Vector(kIZ2_max_data);
+        final Vector  kIZ1_min = new Vector(kIZ1_min_data);
+        final Vector  kIZ1_max = new Vector(kIZ1_max_data);
+
+        Vector moveToPoint = new Vector(point);
+        if(moveToPoint.distanceTo(kIZ1_max)<0.05){
+            point = moveToPoint.minusScalar(0.05).toPoint();
+            Log.i(TAG,"Restricted movement due to KIZ 1 max violation");
+        }
+        if(kIZ1_min.distanceTo(moveToPoint)<0.05){
+            point = moveToPoint.minusScalar(-0.05).toPoint();
+            Log.i(TAG,"Restricted movement due to KIZ 1 min violation");
+        }
+
+
+        if(moveType=='R') {
+            result = api.relativeMoveTo(point, quaternion, printRobotPosition);
+        }else{
+            result = api.moveTo(point, quaternion, printRobotPosition);
+            Log.i(TAG,"Moved");
+        }
+        int noOfTry = 0;
+        while(!result.hasSucceeded() && noOfTry < MAX_TRY){
+
+            if(moveType=='R') {
+                result = api.relativeMoveTo(point, quaternion, printRobotPosition);
+            }else{
+                result = api.moveTo(point, quaternion, printRobotPosition);
+                Log.i(TAG,"Moving Loop " + noOfTry);
+            }
+            ++noOfTry;
+        }
+
+        return (Kinematics.Confidence.GOOD);
+    }
+    /************************************************************/
+    /* computeQuaternion()
+    /* Uses global values of yaw, pitch, roll to compute the
+    /* quaternion.
+    /*      rotation x - roll
+    /*              y - pitch
+     /*             z - yaw
+    /************************************************************/
+    protected Quaternion computeQuaternion(double roll,double pitch, double yaw)
+    {
+        //Precompute sine and cosine values.
+        //Input Euler Angles are in degrees
+        double su = (double) Math.sin(roll  *Math.PI/360);
+        double sv = (double)Math.sin(pitch*Math.PI/360);
+        double sw = (double)Math.sin(yaw *Math.PI/360);
+        double cu = (double)Math.cos(roll  *Math.PI/360);
+        double cv = (double)Math.cos(pitch*Math.PI/360);
+        double cw = (double)Math.cos(yaw *Math.PI/360);
+
+        //Quaternion
+        float q0 = 1.0f;
+        float q1 = 0.0f;
+        float q2 = 0.0f;
+        float q3 = 0.0f;
+
+        q0 = (float)(cu*cv*cw + su*sv*sw);
+        q1 = (float)(su*cv*cw - cu*sv*sw);
+        q2 = (float)(cu*sv*cw + su*cv*sw);
+        q3 = (float)(cu*cv*sw - su*sv*cw);
+
+        //Display Quaternion, rounded to three sig. figs.
+        q0 = (float)Math.floor(q0*10000)/10000;
+        q1 = (float)Math.floor(q1*10000)/10000;
+        q2 = (float)Math.floor(q2*10000)/10000;
+        q3 = (float)Math.floor(q3*10000)/10000;
+
+
+        return(new Quaternion (q1,q2,q3,q0));
+    }
+
+    protected double[] multiplyQuaternion( double r0, double r1, double r2, double r3, double s0, double s1, double s2, double s3 )
+    {
+        double[] q = {0f, 0f, 0f, 0f};
+
+        q[0] = r0*s0-r1*s1-r2*s2-r3*s3;
+        q[1] = r0*s1+r1*s0-r2*s3+r3*s2;
+        q[2] = r0*s2+r1*s3+r2*s0-r3*s1;
+        q[3] = r0*s3-r1*s2+r2*s1+r3*s0;
+        return( q );
+    }
+
+    protected Mat mulMat1(Mat A, Mat B){
+        int r1,c1,r2,c2;
+
+        r1 = A.rows(); c1 = A.cols();
+        r2 = B.rows(); c2 = B.cols();
+
+        // Check if multiplication is Possible
+        if (c1 != r2) {
+            Log.i(TAG, "Size doesn't match. A :"+r1+"x"+c1+" B :"+r2+"x"+c2+". Multiplication Not Possible");
+            return(A);
+        }
+        Mat product = new Mat(r1,c2,CvType.CV_64FC1,Scalar.all(0));
+
+        for(int i = 0; i < r1; i++) {
+            for (int j = 0; j < c2; j++) {
+                for (int k = 0; k < c1; k++) {
+                    product.put(i,j,product.get(i,j)[0]+(A.get(i,k)[0]*B.get(k,j)[0]));
+                    Log.i(TAG, "product "+product.get(i,j)[0]+",A "+A.get(i,k)[0]+",B "+B.get(k,j)[0]);
+                    // product[i][j] += firstMatrix[i][k] * secondMatrix[k][j];
+                }
+            }
+        }
+        return product;
+    }
+
+
+    protected Mat mulMat1(Mat A, double s){
+        int r1,c1, ch1;
+
+        r1 = A.rows(); c1 = A.cols(); ch1 = A.channels();
+        Log.i(TAG,"scalar multiplication "+r1+" "+c1+" "+ch1);
+
+        Mat product = new Mat(r1,c1,CvType.CV_64FC1,Scalar.all(0));
+        double temp=0d;
+
+        for(int i = 0; i < r1; i++) {
+            for (int j = 0; j < c1; j++) {
+                temp = A.get(i,j)[0];
+                product.put(i,j,temp*s);
+            }
+        }
+        return product;
+    }
+    protected Mat subMat(Mat A, Mat B){
+        int r1,c1,r2,c2;
+
+        r1 = A.rows(); c1 = A.cols();
+        r2 = A.rows(); c2 = A.cols();
+        if(r1 != r2 || c1 != c2){
+            Log.i(TAG, "Size doesn't match. A :"+r1+"x"+c1+" B :"+r2+"x"+c2+". Subtraction Not Possible");
+            return(A);
+        }
+
+        Mat result = new Mat(r1,c1,CvType.CV_64FC1,Scalar.all(0.0f));
+
+        for(int i = 0; i < r1; i++) {
+            for (int j = 0; j < c1; j++) {
+                result.put(i,j,A.get(i,j)[0]-B.get(i,j)[0]);
+            }
+        }
+        Log.i(TAG,"Dump subtract output :"+result.dump());
+        return result;
+    }
+    protected Mat transposeMat(Mat A){
+        int r1,c1;
+
+        r1 = A.rows(); c1 = A.cols();
+
+        Log.i(TAG,"Rows :"+A.rows()+"Cols "+A.cols()+" Channels "+A.channels());
+
+        Mat result = new Mat(c1,r1,CvType.CV_64FC1,Scalar.all(0.0f));
+
+        for(int i = 0; i < r1; i++) {
+            for (int j = 0; j < c1; j++) {
+                result.put(j,i,A.get(i,j)[0]);
+            }
+        }
+        Log.i(TAG,"Transpose Function "+result.dump());
+        return result;
+    }
+    protected double[][] mulMat(double A[][], double B[][]){
+        int r1,c1,r2,c2;
+
+        r1 = A.length; c1 = A[0].length;
+        r2 = B.length; c2 = B[0].length;
+
+        // Check if multiplication is Possible
+        if (c1 != r2) {
+            Log.i(TAG, "Size doesn't match. A :"+r1+"x"+c1+" B :"+r2+"x"+c2+". Multiplication Not Possible");
+            return(A);
+        }
+        double[][] product = new double[r1][c2];
+
+        for(int i = 0; i < r1; i++) {
+            for (int j = 0; j < c2; j++) {
+                for (int k = 0; k < c1; k++) {
+                    product[i][j] =product[i][j] +(A[i][k]*B[k][j]);
+                }
+            }
+        }
+        return product;
+
+    }
+
+    protected double[][] mulMat(double A[][], double s){
+        int r1,c1;
+
+        r1 = A.length; c1 = A[0].length;
+
+        double[][] product = new double[r1][c1];
+
+        for(int i = 0; i < r1; i++) {
+            for (int j = 0; j < c1; j++) {
+                product[i][j]=product[i][j]*s;
+            }
+        }
+        return product;
+    }
+    protected double[] mulMat(double A[], double s){
+        int r1;
+
+        r1 = A.length;
+
+        double[] product = new double[r1];
+
+        for(int i = 0; i < r1; i++) {
+            product[i] = product[i]*s;
+        }
+        return product;
+    }
+    protected Mat convertToMat(double A[],int row,int col){
+
+        int len = A.length;
+        int k = 0;
+
+        Mat result = new Mat(row,col,CvType.CV_64FC1,Scalar.all(0.0f));
+
+        for(int i = 0; i < row; i++) {
+            for (int j = 0; j < col; j++) {
+                result.put(i,j,A[k]);
+                k++;
+            }
+        }
+        Log.i(TAG,"Converted to Mat"+result.dump());
+        return result;
+    }
+    protected static void wait(int sec)
+    {
+        int ms = sec* 1000;
+
+        try
+        {
+            Thread.sleep(ms);
+        }
+        catch(InterruptedException ex)
+        {
+            Thread.currentThread().interrupt();
+        }
+    }
+    public Mat undistort(Mat src){
+        double[][] distortion = api.getNavCamIntrinsics(); //gets camera distortion
+        Mat dst = new Mat();//output image
+        Mat camMat = new Mat().zeros(3, 3, CvType.CV_64FC(1));//intrinsic camera matrix initializer
+        Mat distortionCoefficients = new Mat().zeros(4, 1, CvType.CV_64FC(1)); //distortion coefficient initializer
+
+        for(int r=0; r<3; r++){ //fills intrinsic camera matrix with correct values
+            for(int c=0; c<3; c++) {
+                camMat.put(r, c, (distortion[0][3*r+c]));
+                Log.i(TAG, "camMat[" + r +", " + c + "] = " + camMat.get(r, c));
+                Log.i(TAG, "distortion[" + (3*r+c) + "] = " + distortion[0][3*r+c]);
+            }
+        }
+        for(int i=0; i<distortion[1].length-1; i++){ //fills distorition coefficient array with values
+            distortionCoefficients.put(i, 0, (distortion[1][i]));
+            Log.i(TAG, "distortionCoefficients[" + i + "] = " + distortionCoefficients.get(0,1));
+            Log.i(TAG, "distortion[" + i + "] = " + distortion[1][i]);
+        }
+
+        org.opencv.imgproc.Imgproc.undistort(src, dst, camMat, distortionCoefficients); //undistorts image
+        return dst;
+    }
+
+    public Mat getCameraMatrix(){
+        double[][] distortion = api.getNavCamIntrinsics(); //gets camera distortion
+        Mat camMat = new Mat().zeros(3, 3, CvType.CV_64FC(1));//intrinsic camera matrix initializer
+
+        for(int r=0; r<3; r++){ //fills intrinsic camera matrix with correct values
+            for(int c=0; c<3; c++) {
+                camMat.put(r, c, (distortion[0][3*r+c]));
+            }
+        }
+
+        return camMat;
+    }
+
+    public Mat getDistCoeffs(){
+        double[][] distortion = api.getNavCamIntrinsics(); //gets camera distortion
+        Mat distortionCoefficients = new Mat().zeros(4, 1, CvType.CV_64FC(1)); //distortion coefficient initializer
+
+        for(int i=0; i<distortion[1].length-1; i++){ //fills distorition coefficient array with values
+            distortionCoefficients.put(i, 0, (distortion[1][i]));
+        }
+
+        return distortionCoefficients;
+    }
+
+}
