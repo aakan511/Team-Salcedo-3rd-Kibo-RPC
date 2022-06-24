@@ -88,41 +88,14 @@ public class YourService extends KiboRpcService {
         final Mat navCamMat = getCameraMatrix();
         final Mat navCamDistCoef =getDistCoeffs();
         final double navCamToLaserDelta[] = {-0.0125f,	-0.0994f,	0.0285f};
-        Mat distortionCoefficients4 = new Mat().zeros(4, 1, CvType.CV_64FC(1));
+        //Mat distortionCoefficients4 = new Mat().zeros(4, 1, CvType.CV_64FC(1));
 
         ArrayList<Mat> corners = new ArrayList<Mat>();
         List<Mat> new_corners = new ArrayList<>() ;
         Mat ids = new Mat();
 
+        //final double dockCamIntrinsics [][] = api.getDockCamIntrinsics();
 
-
-        //      final MatOfDouble navCamDistCoef = new MatOfDouble(1,5,CvType.CV_64FC1);
-        final double dockCamIntrinsics [][] = api.getDockCamIntrinsics();
-//        Board target2board = GridBoard.create(2,2,.05f,.15f,Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250),11);
-
- /*       int j=0,k=0;
-        for(int i=0; i<navCamIntrinsics[0].length ; i++){
-            navCamMat.put(j,k, navCamIntrinsics[0][i]);
-            Log.i(TAG+": NavCamIntrinsics Mat :",i+" , "+navCamIntrinsics[0][i]);
-            if((i+1)%3 == 0) {
-                j += 1;
-            }
-            k++;
-            if(k>2) k=0;
-        }
-        navCamMat.put(0,0,navCamTemp);
-        Log.i(TAG, "NavCAM MAT :"+navCamMat.dump());
-        for(int i=0; i<navCamIntrinsics[1].length ; i++){
-            navCamDistCoef.put(0,i, navCamIntrinsics[1][i]);
-            Log.i(TAG+": NavCamIntrinsics Mat :",i+" , "+navCamIntrinsics[1][i]);
-        }
-        Log.i(TAG, "navCamDistCoef MAT :"+navCamDistCoef.dump());
-        distortionCoefficients4 = navCamDistCoef.submat(0,0,0,3);
-        Log.i(TAG, "navCamDistCoef 4 MAT :"+distortionCoefficients4.dump());
-*/
-
-        navCamMat.put(0,0,Arrays.copyOfRange(navCamIntrinsics[0],0,8));
-        navCamDistCoef.put(0,0,Arrays.copyOfRange(navCamIntrinsics[1],0,4));
 
         Log.i(TAG, "NavCAM MAT new :"+navCamMat.dump());
         Log.i(TAG, "navCamDistCoef MAT new :"+navCamDistCoef.dump());
@@ -136,9 +109,9 @@ public class YourService extends KiboRpcService {
         api.reportPoint1Arrival();
 
         // get a camera image
-        wait(2);
+        //wait(1);
         Mat image = api.getMatNavCam();
-        Mat imageCrtd =  new Mat(1280, 960, CvType.CV_8UC1);;
+        Mat imageCrtd;// =  new Mat(1280, 960, CvType.CV_8UC1);;
 
         Log.i(TAG,"Distortion Total :"+navCamDistCoef.total());
         api.saveMatImage(image, "1_ogOrientation.png");
@@ -146,7 +119,6 @@ public class YourService extends KiboRpcService {
         image = api.getMatNavCam();
         api.saveMatImage(image, "2_ogOrientation_revised.png");
         imageCrtd = undistort(image);
-        //Imgproc.undistort(image,imageCrtd,navCamMat,navCamDistCoef);
         api.saveMatImage(imageCrtd, "3_ogOrientationUnDistorted_imgProcess.png");
 
         Aruco.detectMarkers(imageCrtd, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
@@ -165,20 +137,15 @@ public class YourService extends KiboRpcService {
         // turn the laser off
         api.laserControl(false);
 
-
-//        Point point2 = new Point(10.710000f, -7.70000f, 4.48000f);
-
         Point point2_a = new Point(11.15865f, -10.08813f, 4.48000f);
         Quaternion quaternion2_a = computeQuaternion(0, -89, -23);
         result = moveAstrobee(point2_a, quaternion2_a, 'P',true);
 
         Quaternion quaternion2 = computeQuaternion(0, 0, -87);
 
-//        Point point2_final = new Point(11.1667f, -9.88813f, 5.43000f);
         Point point2_final = new Point(11.1367f, -9.88813f, 5.43000f);
 
         result = moveAstrobee(point2_final, quaternion2, 'P',true);
-
 
         Mat rvec = new Mat().setTo(Scalar.all(0));
         Mat tvec = new Mat().setTo(Scalar.all(0));
@@ -196,7 +163,7 @@ public class YourService extends KiboRpcService {
         Mat tvecR1 = new Mat().zeros(new Size(1,3), CvType.CV_64FC1);
 
 
-        wait(5);
+        wait(2);
 
         image = api.getMatNavCam();
 
@@ -381,7 +348,7 @@ public class YourService extends KiboRpcService {
 
                 result = moveAstrobee(new Point(tvec_real.get(2, 0)[0],
                         0, tvec_real.get(1, 0)[0]), quaternion2, 'R', true);
-                wait(2);
+                wait(1);
                 image = api.getMatNavCam();
                 Imgproc.cvtColor(outputImage,outputImage,Imgproc.COLOR_BayerGR2BGR_VNG);
                 Imgproc.circle(outputImage, new org.opencv.core.Point(image.size().width/2, image.size().height/2 ), 10, new Scalar(0, 255, 0), 5);
@@ -392,7 +359,7 @@ public class YourService extends KiboRpcService {
                         , (navCamToLaserDelta[2] + adjustToCircleCenter[1]) ), quaternion2, 'R', true);
 //----        result = moveAstrobee(new Point(tvec.get(2,0)[0]+navCamToLaserDelta[0], 0,
 //----                tvec.get(0,0)[0]+navCamToLaserDelta[2]), quaternion2, 'R',true);
-                wait(3);
+                wait(2);
             }
         }catch (Exception e){
             Log.i(TAG,"Error: "+e.getMessage());
@@ -402,7 +369,7 @@ public class YourService extends KiboRpcService {
         bmpimage = api.getBitmapNavCam();
         api.saveBitmapImage(bmpimage,"target2Laserbmp.jpg");
         // take target2 snapshots
-        wait(2);
+        wait(1);
         image = api.getMatNavCam();
         api.saveMatImage(image, "target2Laser.png");
         api.takeTarget2Snapshot();
