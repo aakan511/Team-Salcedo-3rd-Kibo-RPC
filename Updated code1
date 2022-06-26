@@ -283,7 +283,8 @@ public class YourService extends KiboRpcService {
                 Log.i(TAG, "navCamDstCoeff :" + navCamDistCoef.rows() + "-" + navCamDistCoef.cols() + "-" + navCamDistCoef.channels());
                 Log.i(TAG, "Rota :" + rotationMat.rows() + "-" + rotationMat.cols() + "-" + rotationMat.channels());
 
-                tvec_real = mulMat1(tvecR1,rotationMat);
+                //tvec_real = mulMat1(tvecR1,rotationMat);
+                //tvec_real = mulMat1(tvecR1,rvec_flipped);
                 // Core.gemm(tvec_flipped, rotationMat, 1, Mat.eye(1,3,CvType.CV_64FC1), 0, tvec_real, 0);
                 // Core.multiply(tvecR1,rotationMat,tvec_real);
                 Log.i(TAG, "core real tvec " + tvec_real.dump());
@@ -346,17 +347,19 @@ public class YourService extends KiboRpcService {
 //X: red, Y: green, Z: blue
 //Z as x, Y as z, X as y
 
-                result = moveAstrobee(new Point(tvec_real.get(2, 0)[0],
-                        0, tvec_real.get(1, 0)[0]), quaternion2, 'R', true);
+                Point point = new Point(tvecR1.get(2, 0)[0], 0, tvecR1.get(1, 0)[0]);
+                result = moveAstrobee(point, quaternion2, 'R', true);
+                Log.i(TAG, "moved");
                 wait(1);
                 image = api.getMatNavCam();
-                Imgproc.cvtColor(outputImage,outputImage,Imgproc.COLOR_BayerGR2BGR_VNG);
+                Log.i(TAG, "took image");
+                Imgproc.cvtColor(image,outputImage,Imgproc.COLOR_BayerGR2BGR_VNG);
                 Imgproc.circle(outputImage, new org.opencv.core.Point(image.size().width/2, image.size().height/2 ), 10, new Scalar(0, 255, 0), 5);
+                Log.i(TAG, "saved image");
                 api.saveMatImage(outputImage, "AdjustedToAruco.jpg");
-                result = moveAstrobee(new Point(
-                        (navCamToLaserDelta[0] + adjustToCircleCenter[0])
-                        , 0.0
-                        , (navCamToLaserDelta[2] + adjustToCircleCenter[1]) ), quaternion2, 'R', true);
+                point = new Point((navCamToLaserDelta[0] + adjustToCircleCenter[0]), 0.0, (navCamToLaserDelta[2] + adjustToCircleCenter[1]) );
+                result = moveAstrobee(point, quaternion2, 'R', true);
+                Log.i(TAG, "moved again");
 //----        result = moveAstrobee(new Point(tvec.get(2,0)[0]+navCamToLaserDelta[0], 0,
 //----                tvec.get(0,0)[0]+navCamToLaserDelta[2]), quaternion2, 'R',true);
                 wait(2);
